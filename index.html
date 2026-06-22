@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>智划师 - AI 总行程规划</title>
+<style>
+@font-face{font-family:'InstrumentSans';src:url('./assets/InstrumentSans-Regular.ttf');font-weight:400}
+@font-face{font-family:'InstrumentSans';src:url('./assets/InstrumentSans-Bold.ttf');font-weight:700}
+@font-face{font-family:'GeistMono';src:url('./assets/GeistMono-Regular.ttf')}
+
+/* ====== 暗红色配色 ====== */
+:root{
+  /* 基础 */
+  --bg:#f5f0f0;--bg2:#faf6f6;--ink:#2d1f1f;--muted:#9a8585;--rule:#e0d5d5;
+  /* 主色：暗红 */
+  --accent:#a52a2a;--accent-light:#fdf0f0;--accent-dark:#8b1a1a;
+  /* 辅助色 */
+  --teal:#6b9b8a;--teal-light:#e8f3ed;
+  --gold:#d4a574;--gold-light:#fdf6e9;
+  /* 状态 */
+  --success:#6b9b8a;--danger:#a52a2a;
+  /* 阴影 */
+  --shadow:0 2px 8px rgba(45,31,31,0.06);--shadow-lg:0 8px 24px rgba(45,31,31,0.1);
+}
+
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'InstrumentSans',system-ui,sans-serif;background:var(--bg);color:var(--ink);line-height:1.5;font-size:14px}
+.mono{font-family:'GeistMono',monospace}
+
+/* ====== 登录/注册弹窗 ====== */
+.auth-overlay{position:fixed;inset:0;background:rgba(45,31,31,0.45);z-index:300;display:flex;align-items:center;justify-content:center;animation:fadeIn 0.2s ease}
+.auth-modal{background:var(--bg2);border-radius:16px;padding:2rem;max-width:380px;width:90%;box-shadow:var(--shadow-lg);animation:modalIn 0.25s ease}
+.auth-modal h2{font-size:1.3rem;margin-bottom:1.2rem;color:var(--ink);text-align:center}
+.auth-modal .form-group{margin-bottom:1rem}
+.auth-modal label{display:block;font-size:0.8rem;color:var(--muted);margin-bottom:0.3rem}
+.auth-modal input{width:100%;border:1.5px solid var(--rule);border-radius:10px;padding:0.55rem 0.8rem;font-family:inherit;font-size:0.9rem;background:var(--bg);outline:none;transition:all 0.15s}
+.auth-modal input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(165,42,42,0.1)}
+.auth-modal .auth-actions{display:flex;gap:0.5rem;margin-top:1.2rem}
+.auth-modal .auth-actions .btn{flex:1}
+.auth-modal .auth-switch{text-align:center;margin-top:1rem;font-size:0.82rem;color:var(--muted)}
+.auth-modal .auth-switch span{color:var(--accent);cursor:pointer;font-weight:600}
+.auth-modal .auth-switch span:hover{text-decoration:underline}
+
+/* ====== 顶栏 ====== */
+.topbar{position:sticky;top:0;z-index:100;background:var(--bg2);border-bottom:1px solid var(--rule);padding:0.7rem 1.5rem;display:flex;align-items:center;gap:1rem;box-shadow:var(--shadow)}
+.topbar .logo{font-weight:700;font-size:1.15rem;color:var(--accent);display:flex;align-items:center;gap:0.5rem}
+.topbar .logo::before{content:"◆";font-size:0.9rem}
+.topbar .logo span{color:var(--muted);font-weight:400;font-size:0.8rem;margin-left:0.2rem}
+.topbar .badge{font-size:0.65rem;background:var(--accent);color:#fff;padding:0.15rem 0.5rem;border-radius:999px;font-weight:600}
+.topbar .right{margin-left:auto;display:flex;align-items:center;gap:0.8rem}
+.topbar .user-info{display:flex;align-items:center;gap:0.5rem;font-size:0.82rem;color:var(--muted)}
+.topbar .user-info .avatar{width:28px;height:28px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:0.75rem;font-weight:600}
+.toggle{display:flex;align-items:center;gap:0.35rem;font-size:0.78rem;color:var(--muted);cursor:pointer}
+.toggle input{accent-color:var(--accent);width:14px;height:14px;cursor:pointer}
+
+/* ====== 布局 ====== */
+.app{display:grid;grid-template-columns:400px 1fr;height:calc(100vh - 50px)}
+@media(max-width:980px){.app{grid-template-columns:1fr;height:auto}}
+
+/* ====== 左栏 ====== */
+.sidebar{background:var(--bg2);border-right:1px solid var(--rule);padding:1.2rem;display:flex;flex-direction:column;gap:1rem;overflow-y:auto}
+.sidebar h3{font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.3rem;font-weight:600}
+
+/* 需求输入 */
+.demand-input-wrap{position:relative}
+.demand-input-wrap textarea{width:100%;border:1.5px solid var(--rule);border-radius:12px;padding:0.8rem;font-family:inherit;font-size:0.85rem;resize:vertical;min-height:56px;background:var(--bg);transition:all 0.2s;line-height:1.5}
+.demand-input-wrap textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(165,42,42,0.1)}
+.demand-input-wrap .hint{font-size:0.72rem;color:var(--muted);margin-top:0.35rem}
+
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:0.35rem;padding:0.55rem 1rem;border-radius:10px;font-family:inherit;font-size:0.82rem;font-weight:600;cursor:pointer;border:none;transition:all 0.15s}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{background:var(--accent-dark)}
+.btn-primary:disabled{opacity:0.5;cursor:not-allowed}
+.btn-sm{padding:0.35rem 0.7rem;font-size:0.75rem}
+.btn-warn{background:var(--gold);color:var(--ink)}
+.btn-warn:hover{background:#c49464}
+.btn-ghost{background:transparent;color:var(--muted);border:1.5px solid var(--rule)}
+.btn-ghost:hover{border-color:var(--accent);color:var(--accent)}
+
+/* 需求列表 */
+.demand-list{display:flex;flex-direction:column;gap:0.4rem;margin-top:0.5rem}
+.demand-tag{display:flex;align-items:center;gap:0.4rem;padding:0.5rem 0.7rem;background:var(--bg);border-radius:10px;font-size:0.8rem;border:1.5px solid var(--rule);transition:all 0.15s}
+.demand-tag:hover{border-color:var(--accent);box-shadow:var(--shadow)}
+.demand-tag .type{font-size:0.62rem;padding:0.1rem 0.35rem;border-radius:999px;font-weight:600;color:#fff}
+.demand-tag .type.goal{background:var(--accent)}
+.demand-tag .type.modify{background:var(--gold)}
+.demand-tag .type.event{background:var(--muted)}
+.demand-tag .del{margin-left:auto;cursor:pointer;color:var(--muted);font-size:0.75rem;padding:0.15rem}
+.demand-tag .del:hover{color:var(--danger)}
+
+/* 图片上传 */
+.upload-area{border:1.5px dashed var(--rule);border-radius:10px;padding:0.6rem;text-align:center;cursor:pointer;transition:all 0.15s;margin-top:0.4rem;background:var(--bg)}
+.upload-area:hover{border-color:var(--accent);background:var(--accent-light)}
+.upload-area .upload-text{font-size:0.78rem;color:var(--muted)}
+.upload-area input[type="file"]{display:none}
+
+/* 总进度 */
+.total-progress{background:var(--bg);border-radius:10px;padding:0.7rem 0.9rem;border:1.5px solid var(--rule)}
+.total-progress .tp-head{display:flex;justify-content:space-between;font-size:0.82rem;margin-bottom:0.35rem}
+.total-progress .tp-head .num{font-family:'GeistMono',monospace;color:var(--accent);font-weight:700}
+.progress-bar{height:5px;background:var(--rule);border-radius:3px;overflow:hidden}
+.progress-bar .fill{height:100%;background:var(--accent);border-radius:3px;transition:width 0.5s ease}
+
+/* 对话 */
+.chat-wrap{flex:1;display:flex;flex-direction:column;min-height:0;border:1.5px solid var(--rule);border-radius:12px;overflow:hidden;background:var(--bg)}
+.chat-area{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:0.6rem;padding:0.8rem}
+.chat-msg{display:flex;gap:0.5rem;animation:msgIn 0.2s ease}
+@keyframes msgIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+.chat-msg.ai{flex-direction:row}
+.chat-msg.user{flex-direction:row-reverse}
+.chat-bubble{max-width:85%;padding:0.55rem 0.75rem;border-radius:12px;font-size:0.85rem;line-height:1.55}
+.chat-msg.ai .chat-bubble{background:var(--bg2);border:1.5px solid var(--rule)}
+.chat-msg.user .chat-bubble{background:var(--accent);color:#fff}
+.chat-bubble .sender{font-size:0.7rem;font-weight:600;margin-bottom:0.15rem;display:block}
+.chat-msg.ai .chat-bubble .sender{color:var(--accent)}
+.chat-msg.user .chat-bubble .sender{color:rgba(255,255,255,0.9)}
+
+/* 对话输入 */
+.chat-input-bar{display:flex;gap:0.4rem;padding:0.6rem;background:var(--bg2);border-top:1.5px solid var(--rule)}
+.chat-input-bar input{flex:1;border:1.5px solid var(--rule);border-radius:10px;padding:0.45rem 0.7rem;font-family:inherit;font-size:0.82rem;background:var(--bg);outline:none;transition:all 0.15s}
+.chat-input-bar input:focus{border-color:var(--accent)}
+
+/* ====== 右栏 ====== */
+.main{padding:1.5rem;overflow-y:auto}
+.main-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:0.5rem}
+.main-header h2{font-size:1.25rem;font-weight:700;letter-spacing:-0.01em;color:var(--ink)}
+
+/* 周导航 */
+.week-nav{display:flex;align-items:center;gap:0.5rem;justify-content:center}
+.week-nav .nav-arrow{width:32px;height:32px;border-radius:8px;border:1.5px solid var(--rule);background:var(--bg2);color:var(--muted);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:1rem;transition:all 0.15s}
+.week-nav .nav-arrow:hover{border-color:var(--accent);color:var(--accent)}
+.week-nav .nav-arrow:disabled{opacity:0.3;cursor:not-allowed}
+.week-nav .week-label{font-size:0.85rem;color:var(--muted);font-weight:600;min-width:80px;text-align:center}
+.day-nav{display:flex;align-items:center;gap:0.3rem}
+.day-nav button{padding:0.4rem 0.6rem;border-radius:10px;font-family:inherit;font-size:0.78rem;font-weight:600;cursor:pointer;border:1.5px solid var(--rule);background:var(--bg2);color:var(--muted);transition:all 0.15s;min-width:60px}
+.day-nav button.active{background:var(--accent);color:#fff;border-color:var(--accent);box-shadow:var(--shadow)}
+.day-nav button:hover:not(.active){border-color:var(--accent);color:var(--accent)}
+.day-nav button.done-day{background:var(--success);color:#fff;border-color:var(--success)}
+.day-nav button.done-day.active{background:var(--accent);border-color:var(--accent)}
+.day-nav button .day-date{display:block;font-size:0.65rem;font-weight:400;opacity:0.8}
+
+/* ====== 日程卡片式布局 ====== */
+.day-header{display:flex;align-items:center;gap:0.8rem;margin-bottom:1rem;padding-bottom:0.6rem;border-bottom:2px solid var(--rule)}
+.day-header .day-num{font-size:1.6rem;font-weight:700;color:var(--accent);font-family:'GeistMono',monospace}
+.day-header .day-info{flex:1}
+.day-header .day-info .day-title{font-size:1rem;font-weight:600}
+.day-header .day-info .day-meta{font-size:0.78rem;color:var(--muted);margin-top:0.1rem}
+.day-header .day-status-badge{font-size:0.72rem;padding:0.25rem 0.7rem;border-radius:999px;font-weight:600}
+.day-header .day-status-badge.in-progress{background:var(--accent-light);color:var(--accent-dark)}
+.day-header .day-status-badge.completed{background:var(--teal-light);color:#4a7a6a}
+.day-header .day-status-badge.upcoming{background:var(--bg);color:var(--muted)}
+
+/* 任务卡片 */
+.tasks-grid{display:flex;flex-direction:column;gap:0.7rem}
+.task-card{background:var(--bg2);border:1.5px solid var(--rule);border-radius:14px;padding:1rem 1.1rem;position:relative;transition:all 0.2s;box-shadow:var(--shadow)}
+.task-card:hover{box-shadow:var(--shadow-lg);transform:translateY(-1px)}
+.task-card.learning{border-left:4px solid var(--accent)}
+.task-card.event{border-left:4px solid var(--gold)}
+.task-card.done{opacity:0.5}
+.task-card.done .task-card-title{text-decoration:line-through}
+
+.task-card-header{display:flex;align-items:flex-start;justify-content:space-between;gap:0.5rem}
+.task-card-time{display:flex;align-items:center;gap:0.35rem;font-family:'GeistMono',monospace;font-size:0.75rem;color:var(--muted);background:var(--bg);padding:0.2rem 0.5rem;border-radius:6px}
+.task-card-time .time-sep{margin:0 0.1rem;opacity:0.5}
+
+.task-card-title{font-size:0.92rem;font-weight:600;margin-top:0.4rem;line-height:1.35}
+.task-card-detail{font-size:0.8rem;color:var(--muted);margin-top:0.2rem;line-height:1.45}
+.task-card-source{font-size:0.7rem;font-family:'GeistMono',monospace;color:var(--accent);margin-top:0.35rem;opacity:0.7}
+
+.task-card-check{position:absolute;top:1rem;right:1rem;width:22px;height:22px;border-radius:6px;border:2px solid var(--rule);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.15s;font-size:0.75rem;background:#fff}
+.task-card-check:hover{border-color:var(--accent)}
+.task-card-check.done{background:var(--accent);border-color:var(--accent);color:#fff}
+
+/* 完成横幅 */
+.day-complete-banner{background:var(--accent);color:#fff;padding:0.8rem 1.2rem;border-radius:14px;display:flex;align-items:center;justify-content:space-between;margin-bottom:1.2rem;animation:bannerIn 0.35s ease}
+@keyframes bannerIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
+.day-complete-banner p{font-size:0.9rem;font-weight:600}
+.day-complete-banner button{background:rgba(255,255,255,0.2);color:#fff;border:1.5px solid rgba(255,255,255,0.35);padding:0.4rem 0.9rem;border-radius:10px;font-family:inherit;font-size:0.82rem;font-weight:600;cursor:pointer;transition:all 0.15s}
+.day-complete-banner button:hover{background:rgba(255,255,255,0.3)}
+
+/* 提醒弹窗 */
+.reminder-overlay{position:fixed;inset:0;background:rgba(45,31,31,0.3);z-index:200;display:flex;align-items:center;justify-content:center;animation:fadeIn 0.2s ease}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.reminder-modal{background:var(--bg2);border-radius:16px;padding:1.8rem;max-width:380px;width:90%;box-shadow:var(--shadow-lg);animation:modalIn 0.25s ease}
+@keyframes modalIn{from{opacity:0;transform:scale(0.96)}to{opacity:1;transform:scale(1)}}
+.reminder-modal h3{font-size:1.05rem;margin-bottom:0.6rem;color:var(--ink)}
+.reminder-modal .task-item{padding:0.35rem 0;font-size:0.85rem;color:var(--ink)}
+.reminder-modal .task-item .time{color:var(--muted);font-size:0.75rem;margin-right:0.4rem;font-family:'GeistMono',monospace}
+.reminder-modal .actions{margin-top:1.2rem;display:flex;justify-content:flex-end}
+
+/* 空状态 */
+.empty-state{text-align:center;padding:4rem 1rem;color:var(--muted)}
+.empty-state .icon{font-size:2.8rem;margin-bottom:0.7rem;display:block;opacity:0.5}
+.empty-state p{font-size:0.9rem;line-height:1.6}
+
+/* Toast */
+.toast{position:fixed;bottom:1.2rem;right:1.2rem;background:var(--ink);color:#fff;padding:0.6rem 1rem;border-radius:10px;font-size:0.83rem;z-index:999;animation:toastIn 0.25s ease,toastOut 0.25s ease 2.75s forwards;box-shadow:var(--shadow-lg)}
+@keyframes toastIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes toastOut{from{opacity:1}to{opacity:0;transform:translateY(8px)}}
+
+@media(max-width:980px){
+  .sidebar{max-height:none;border-right:none;border-bottom:1.5px solid var(--rule)}
+}
+</style>
+</head>
+<body>
+
+<!-- 登录/注册弹窗（默认隐藏，点击登录按钮才显示） -->
+<div class="auth-overlay" id="authOverlay" style="display:none" onclick="if(event.target===this)ZHS.hideAuth()">
+  <div class="auth-modal" id="authModal">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.2rem">
+      <h2 id="authTitle" style="margin:0">登录</h2>
+      <span style="cursor:pointer;color:var(--muted);font-size:1.2rem;padding:0.2rem" onclick="ZHS.hideAuth()">✕</span>
+    </div>
+    <div class="form-group">
+      <label>用户名</label>
+      <input type="text" id="authUsername" placeholder="请输入用户名" />
+    </div>
+    <div class="form-group">
+      <label>密码</label>
+      <input type="password" id="authPassword" placeholder="请输入密码" />
+    </div>
+    <div class="auth-actions">
+      <button class="btn btn-primary" style="flex:1" id="authBtn" onclick="ZHS.handleAuth()">登录</button>
+    </div>
+    <div class="auth-switch" id="authSwitch">
+      还没有账号？<span onclick="ZHS.toggleAuthMode()">立即注册</span>
+    </div>
+  </div>
+</div>
+
+<div class="topbar">
+  <div class="logo">智划师<span>AI 总行程规划</span></div>
+  <div class="badge">Demo</div>
+  <div class="right">
+    <div class="user-info" id="userInfo">
+      <div class="avatar" id="userAvatar">智</div>
+      <span id="userName">智划师</span>
+    </div>
+    <button class="btn btn-ghost btn-sm" id="loginBtn" onclick="ZHS.showAuth()">登录</button>
+    <button class="btn btn-ghost btn-sm" id="logoutBtn" onclick="ZHS.logout()" style="display:none">退出</button>
+    <label class="toggle"><input type="checkbox" id="reminderToggle" checked /> 提醒</label>
+    <label class="toggle"><input type="checkbox" id="autoNextToggle" checked /> 自动跳转</label>
+  </div>
+</div>
+
+<div class="app">
+  <div class="sidebar">
+    <!-- 需求输入 -->
+    <div>
+      <h3>提出需求</h3>
+      <div class="demand-input-wrap">
+        <textarea id="demandInput" placeholder="例如：我想40天学会Python，周三下午有会议">我想两个月内学会 Python 数据分析</textarea>
+        <div class="hint">可输入多个需求，AI 整合为总行程表</div>
+      </div>
+      <div class="upload-area" onclick="document.getElementById('fileInput').click()">
+        <span class="upload-text">📷 上传图片</span>
+        <input type="file" id="fileInput" accept="image/*" onchange="ZHS.handleImageUpload(this)" />
+      </div>
+      <div style="display:flex;gap:0.35rem;margin-top:0.6rem">
+        <button class="btn btn-primary" style="flex:1" onclick="ZHS.submitDemand()">提交需求</button>
+        <button class="btn btn-warn btn-sm" id="generateBtn" onclick="ZHS.generateSchedule()" style="display:none">生成总行程</button>
+      </div>
+      <div class="demand-list" id="demandList"></div>
+    </div>
+
+    <!-- 总进度 -->
+    <div class="total-progress" id="totalProgress" style="display:none">
+      <div class="tp-head"><span>总体进度</span><span class="num" id="totalNum">0/0</span></div>
+      <div class="progress-bar"><div class="fill" id="totalFill" style="width:0%"></div></div>
+    </div>
+
+    <!-- AI 对话 -->
+    <div class="chat-wrap">
+      <div class="chat-area" id="chatArea">
+        <div style="text-align:center;padding:1.5rem;color:var(--muted);font-size:0.82rem">
+          <span style="font-size:1.8rem;display:block;margin-bottom:0.4rem">💬</span>
+          提交需求后，AI 会主动追问信息
+        </div>
+      </div>
+      <div class="chat-input-bar" id="chatInputBar" style="display:none">
+        <input type="text" id="chatInput" placeholder="输入回答..." />
+        <button class="btn btn-primary btn-sm" onclick="ZHS.submitAnswer()">发送</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="main-header">
+      <h2 id="mainTitle">总行程规划</h2>
+      <div class="week-nav" id="weekNav" style="display:none">
+        <button class="nav-arrow" id="prevWeekBtn" onclick="ZHS.prevWeek()">◀</button>
+        <span class="week-label" id="weekLabel">第1周</span>
+        <button class="nav-arrow" id="nextWeekBtn" onclick="ZHS.nextWeek()">▶</button>
+      </div>
+    </div>
+    <div class="day-nav" id="dayNav"></div>
+    <div id="scheduleContainer">
+      <div class="empty-state">
+        <span class="icon">📅</span>
+        <p>在左侧提交需求<br>AI 收集信息并生成整合后的总行程表</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="assets/app.js"></script>
+</body>
+</html>
