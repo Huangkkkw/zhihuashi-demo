@@ -127,6 +127,69 @@
     return 21;
   }
 
+  /* ====== 自动搜索学习资源 ====== */
+  function searchResourcesForDemand(demand) {
+    var text = demand.text.toLowerCase();
+    var resources = [];
+
+    if (/python|数据分析|data|pandas|numpy/.test(text)) {
+      resources = [
+        { title: 'Python 官方文档 - Tutorial', source: 'python.org', type: '文档' },
+        { title: 'Pandas 入门教程（10分钟上手）', source: 'pandas.pydata.org', type: '教程' },
+        { title: 'NumPy 用户指南', source: 'numpy.org', type: '文档' },
+        { title: 'Matplotlib 可视化教程', source: 'matplotlib.org', type: '教程' },
+        { title: 'Kaggle - Python 数据分析实战', source: 'kaggle.com', type: '实战' },
+        { title: 'B站 - Python数据分析从入门到精通', source: 'bilibili.com', type: '视频' }
+      ];
+    } else if (/英语|四六级|雅思|托福|cet/.test(text)) {
+      resources = [
+        { title: '新概念英语 1-4 册', source: '外研社', type: '教材' },
+        { title: '每日英语听力 APP', source: '每日英语', type: 'App' },
+        { title: 'BBC Learning English', source: 'bbc.co.uk', type: '网站' },
+        { title: '剑桥雅思真题 4-18', source: 'Cambridge', type: '真题' },
+        { title: '墨墨背单词 - 雅思核心词汇', source: 'momo.com', type: 'App' }
+      ];
+    } else if (/考研|研究生|gre|gmat/.test(text)) {
+      resources = [
+        { title: '考研数学复习全书', source: '李永乐', type: '教材' },
+        { title: '考研英语红宝书', source: '新东方', type: '词汇' },
+        { title: '肖秀荣政治精讲精练', source: '肖秀荣', type: '教材' },
+        { title: '历年考研真题解析', source: '教育部', type: '真题' }
+      ];
+    } else if (/前端|html|css|javascript|react|vue/.test(text)) {
+      resources = [
+        { title: 'MDN Web 文档', source: 'developer.mozilla.org', type: '文档' },
+        { title: 'freeCodeCamp 前端课程', source: 'freecodecamp.org', type: '课程' },
+        { title: 'Vue.js 官方教程', source: 'vuejs.org', type: '文档' },
+        { title: 'React 官方文档', source: 'react.dev', type: '文档' },
+        { title: 'CSS-Tricks 布局指南', source: 'css-tricks.com', type: '教程' }
+      ];
+    } else if (/java|spring|后端/.test(text)) {
+      resources = [
+        { title: 'Java 核心技术 卷 I', source: 'Cay Horstmann', type: '教材' },
+        { title: 'Spring Boot 官方文档', source: 'spring.io', type: '文档' },
+        { title: 'LeetCode Java 题解', source: 'leetcode.com', type: '练习' },
+        { title: 'B站 - Java 从入门到实战', source: 'bilibili.com', type: '视频' }
+      ];
+    } else if (/设计|ps|photoshop|ui|figma/.test(text)) {
+      resources = [
+        { title: 'Figma 官方教程', source: 'figma.com', type: '教程' },
+        { title: '设计心理学', source: 'Don Norman', type: '书籍' },
+        { title: 'Dribbble 设计灵感', source: 'dribbble.com', type: '灵感' },
+        { title: '站酷 - UI设计入门', source: 'zcool.com.cn', type: '教程' }
+      ];
+    } else {
+      resources = [
+        { title: '相关领域入门指南', source: 'zhihu.com', type: '文章' },
+        { title: 'B站 系统教程合集', source: 'bilibili.com', type: '视频' },
+        { title: 'Coursera 在线课程', source: 'coursera.org', type: '课程' },
+        { title: 'GitHub 开源项目参考', source: 'github.com', type: '项目' }
+      ];
+    }
+
+    return resources;
+  }
+
   function generateQuestionsForDemand(demand) {
     var questions = [];
     var type = demand.type;
@@ -306,7 +369,31 @@
     state.dialogIndex = 0;
     chatArea.innerHTML = '';
 
+    // 先为每个需求自动搜索资源
     state.demands.forEach(function (demand) {
+      if (demand.type === 'goal') {
+        var resources = searchResourcesForDemand(demand);
+        demand.resources = resources;
+      }
+    });
+
+    // 构建对话队列：搜索展示 -> 提问
+    state.demands.forEach(function (demand) {
+      // 搜索资源展示（系统消息，不等待回答）
+      if (demand.type === 'goal' && demand.resources && demand.resources.length > 0) {
+        var searchMsg = '🔍 正在搜索「' + demand.text.substring(0, 20) + '」相关学习资源...';
+        state.dialogQueue.push({ ai: searchMsg, delay: 400, isSystem: true });
+
+        var foundMsg = '找到 <strong>' + demand.resources.length + ' 个</strong>推荐资源：';
+        state.dialogQueue.push({ ai: foundMsg, delay: 600, isSystem: true });
+
+        demand.resources.forEach(function (res, idx) {
+          var resMsg = (idx + 1) + '. <strong>' + res.title + '</strong> <span style="color:var(--muted);font-size:0.78rem">[' + res.type + ' · ' + res.source + ']</span>';
+          state.dialogQueue.push({ ai: resMsg, delay: 150, isSystem: true });
+        });
+      }
+
+      // 提问
       var questions = generateQuestionsForDemand(demand);
       demand.questions = questions;
       if (questions.length > 0) {
@@ -461,6 +548,10 @@
   }
 
   function generateTaskForGoal(goal, dayIndex, goalIndex) {
+    // 如果有搜索到的资源，用真实资源名称填充任务
+    var resources = goal.resources || [];
+    var hasResources = resources.length > 0;
+
     var texts = [
       { title: '学习核心概念', detail: '阅读教材/观看视频，理解基础知识点', source: '学习资源' },
       { title: '完成练习题', detail: '做相关练习题巩固所学内容', source: '练习题库' },
@@ -473,14 +564,38 @@
 
     var idx = dayIndex % texts.length;
     var task = Object.assign({}, texts[idx]);
+
+    // 用搜索到的真实资源替换通用描述
+    if (hasResources) {
+      var resIdx = dayIndex % resources.length;
+      var res = resources[resIdx];
+      task.source = res.title + ' · ' + res.source;
+
+      // 根据资源类型定制详情
+      if (res.type === '视频') {
+        task.detail = '观看「' + res.title + '」，完成对应章节学习笔记';
+      } else if (res.type === '文档' || res.type === '教程') {
+        task.detail = '阅读「' + res.title + '」，理解核心概念并做笔记';
+      } else if (res.type === '实战' || res.type === '项目') {
+        task.detail = '跟随「' + res.title + '」完成实战练习';
+      } else if (res.type === '真题' || res.type === '练习') {
+        task.detail = '完成「' + res.title + '」对应章节练习';
+      } else if (res.type === 'App') {
+        task.detail = '使用「' + res.title + '」进行每日练习';
+      } else {
+        task.detail = '学习「' + res.title + '」，掌握相关知识点';
+      }
+    }
+
     task.title = goal.text.substring(0, 10) + ' - ' + task.title;
 
     var subtask = null;
     if (dayIndex % 3 === 0 && dayIndex > 0) {
+      var checkRes = hasResources ? resources[(dayIndex + 1) % resources.length] : null;
       subtask = {
         title: '检查进度并调整',
-        detail: '回顾完成情况，根据实际进度调整后续计划',
-        source: '系统反馈'
+        detail: checkRes ? '回顾「' + checkRes.title + '」学习情况，根据实际进度调整后续计划' : '回顾完成情况，根据实际进度调整后续计划',
+        source: checkRes ? checkRes.source : '系统反馈'
       };
     }
 
