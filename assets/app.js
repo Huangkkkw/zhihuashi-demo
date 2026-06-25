@@ -592,37 +592,46 @@
     else if (/自驾/.test(transport)) travelMinutes = 45;
     else if (/大巴|机场大巴/.test(transport)) travelMinutes = 70;
 
-    // 解析提前到达时间
+    // 解析提前到达时间：纯数字视为分钟，带"小时"才乘60
     var earlyMatch = arriveEarly.match(/(\d+)/);
-    var earlyMinutes = earlyMatch ? parseInt(earlyMatch[1]) * 60 : 120;
-
-    // 计算各节点时间
-    var arriveAirportHour = ftHour;
-    var arriveAirportMin = ftMin - earlyMinutes;
-    while (arriveAirportMin < 0) {
-      arriveAirportMin += 60;
-      arriveAirportHour -= 1;
+    var earlyMinutes = 120; // 默认2小时
+    if (earlyMatch) {
+      var num = parseInt(earlyMatch[1]);
+      if (/小时/.test(arriveEarly)) {
+        earlyMinutes = num * 60;
+      } else if (/分钟/.test(arriveEarly)) {
+        earlyMinutes = num;
+      } else {
+        // 纯数字，<=120视为分钟，>120视为小时
+        earlyMinutes = num <= 120 ? num : num * 60;
+      }
     }
 
-    var departHomeMin = arriveAirportMin - travelMinutes;
-    var departHomeHour = arriveAirportHour;
-    while (departHomeMin < 0) {
-      departHomeMin += 60;
-      departHomeHour -= 1;
+    // 计算各节点时间（带天数偏移保护）
+    function addMin(h, m, delta) {
+      var total = h * 60 + m + delta;
+      var dayOffset = 0;
+      while (total < 0) { total += 1440; dayOffset -= 1; }
+      while (total >= 1440) { total -= 1440; dayOffset += 1; }
+      return { hour: Math.floor(total / 60), min: total % 60, dayOffset: dayOffset };
     }
+
+    var arrive = addMin(ftHour, ftMin, -earlyMinutes);
+    var depart = addMin(arrive.hour, arrive.min, -travelMinutes);
 
     // 格式化时间
     function fmt(h, m) {
+      h = ((h % 24) + 24) % 24; // 确保 0-23
       return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
     }
 
     var blocks = [];
 
     // 1. 从家出发
-    var departHomeTime = fmt(departHomeHour, departHomeMin);
-    var arriveAirportTime = fmt(arriveAirportHour, arriveAirportMin);
+    var departTime = fmt(depart.hour, depart.min);
+    var arriveAirportTime = fmt(arrive.hour, arrive.min);
     blocks.push({
-      start: departHomeTime,
+      start: departTime,
       end: arriveAirportTime,
       title: '🚗 从家出发前往' + airport,
       detail: '乘坐' + transport + '，预计' + travelMinutes + '分钟到达' + airport,
@@ -630,52 +639,52 @@
       source: '高德地图 · ' + transport + '路线'
     });
 
-    // 2. 到达机场，办理值机
-    var checkinEndHour = arriveAirportHour;
-    var checkinEndMin = arriveAirportMin + 40;
-    while (checkinEndMin >= 60) {
-      checkinEndMin -= 60;
-      checkinEndHour += 1;
-    }
-    blocks.push({
-      start: arriveAirportTime,
-      end: fmt(checkinEndHour, checkinEndMin),
-      title: '🛫 到达' + airport + '，办理值机/托运/安检',
-      detail: '提前' + (earlyMinutes / 60) + '小时到达，办理登机手续',
-      type: 'event',
-      source: airport + '官网 · 值机指南'
-    });
-
-    // 3. 候机
-    var boardHour = checkinEndHour;
-    var boardMin = checkinEndMin;
-    var boardEndHour = ftHour;
-    var boardEndMin = ftMin - 15;
-    while (boardEndMin < 0) {
-      boardEndMin += 60;
-      boardEndHour -= 1;
-    }
-    if (boardEndHour > boardHour || (boardEndHour === boardHour && boardEndMin > boardMin)) {
+    // 2. 到达机场，办理值机（最长40分钟或到起飞前15分钟）
+    var checkinDuration = Math.min(40, ftHour * 60 + ftMin - (arrive.hour * 60 + arrive.min) - 15);
+    if (checkinDuration > 0) {
+      var checkinEnd = addMin(arrive.hour, arrive.min, checkinDuration);
       blocks.push({
-        start: fmt(boardHour, boardMin),
-        end: fmt(boardEndHour, boardEndMin),
-        title: '☕ 候机休息',
-        detail: '前往登机口等候，可处理邮件或休息',
+        start: arriveAirportTime,
+        end: fmt(checkinEnd.hour, checkinEnd.min),
+        title: '🛫 到达' + airport + '，办理值机/托运/安检',
+        detail: '提前抵达，办理登机手续',
         type: 'event',
-        source: airport + ' · 登机口信息'
+        source: airport + '官网 · 值机指南'
       });
+
+      // 3. 候机（checkin结束到起飞前15分钟）
+      var waitStart = { hour: checkinEnd.hour, min: checkinEnd.min };
+      var waitEnd = addMin(ftHour, ftMin, -15);
+      if (waitEnd.hour > waitStart.hour || (waitEnd.hour === waitStart.hour && waitEnd.min > waitStart.min)) {
+        blocks.push({
+          start: fmt(waitStart.hour, waitStart.min),
+          end: fmt(waitEnd.hour, waitEnd.min),
+          title: '☕ 候机休息',
+          detail: '前往登机口等候，可处理邮件或休息',
+          type: 'event',
+          source: airport + ' · 登机口信息'
+        });
+      }
+    } else {
+      // 时间不够，直接候机
+      var waitEnd2 = addMin(ftHour, ftMin, -15);
+      if (waitEnd2.hour > arrive.hour || (waitEnd2.hour === arrive.hour && waitEnd2.min > arrive.min)) {
+        blocks.push({
+          start: arriveAirportTime,
+          end: fmt(waitEnd2.hour, waitEnd2.min),
+          title: '☕ 候机休息',
+          detail: '已到达机场，前往登机口等候',
+          type: 'event',
+          source: airport + ' · 登机口信息'
+        });
+      }
     }
 
     // 4. 登机起飞
-    var gateCloseMin = ftMin + 15;
-    var gateCloseHour = ftHour;
-    while (gateCloseMin >= 60) {
-      gateCloseMin -= 60;
-      gateCloseHour += 1;
-    }
+    var gateClose = addMin(ftHour, ftMin, 15);
     blocks.push({
       start: flightTime,
-      end: fmt(gateCloseHour, gateCloseMin),
+      end: fmt(gateClose.hour, gateClose.min),
       title: '✈️ ' + (flightNo ? flightNo + ' ' : '') + '航班起飞',
       detail: '目的地：' + airport + '，请留意登机广播',
       type: 'event',
