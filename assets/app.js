@@ -409,14 +409,21 @@
     }, step.delay || 500);
   }
 
-  /* ====== 用户提交回答 ====== */
+  /* ====== 统一输入入口：回答 AI 问题 或 提交新需求 ====== */
   ZHS.submitAnswer = function () {
     var input = document.getElementById('chatInput');
     var text = input.value.trim();
-    if (!text || !state.waitingForAnswer) return;
+    if (!text) return;
+
+    // 如果 AI 没在提问，当作新需求提交
+    if (!state.waitingForAnswer) {
+      input.value = '';
+      document.getElementById('demandInput').value = text;
+      ZHS.submitDemand();
+      return;
+    }
 
     state.waitingForAnswer = false;
-    document.getElementById('chatInputBar').style.display = 'none';
     input.value = '';
 
     var currentStep = state.dialogQueue[state.dialogIndex - 1];
@@ -1437,4 +1444,39 @@
       ZHS.handleAuth();
     }
   });
+
+  /* ====== 左侧栏拖动调整宽度 ====== */
+  (function () {
+    var handle = document.getElementById('resizeHandle');
+    var sidebar = document.getElementById('sidebar');
+    var appEl = document.querySelector('.app');
+    if (!handle || !sidebar || !appEl) return;
+
+    var isResizing = false;
+    handle.addEventListener('mousedown', function (e) {
+      isResizing = true;
+      handle.classList.add('resizing');
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', function (e) {
+      if (!isResizing) return;
+      var newWidth = e.clientX;
+      if (newWidth < 280) newWidth = 280;
+      if (newWidth > 600) newWidth = 600;
+      sidebar.style.width = newWidth + 'px';
+      appEl.style.gridTemplateColumns = newWidth + 'px 1fr';
+    });
+
+    document.addEventListener('mouseup', function () {
+      if (isResizing) {
+        isResizing = false;
+        handle.classList.remove('resizing');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
+    });
+  })();
 })();
