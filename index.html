@@ -251,8 +251,13 @@ body{font-family:'InstrumentSans',system-ui,sans-serif;background:var(--bg);colo
     <div>
       <h3>提出需求</h3>
       <div class="demand-input-wrap">
-        <textarea id="demandInput" placeholder="例如：我想40天学会Python，周三下午有会议">我想两个月内学会 Python 数据分析</textarea>
-        <div class="hint">可输入多个需求，AI 整合为总行程表</div>
+        <textarea id="demandInput" placeholder="示例1：我想两个月学会Python&#10;示例2：后天下午飞北京，航班CA1234">我想两个月内学会 Python 数据分析</textarea>
+        <div class="hint" style="margin-top:0.5rem">
+          <div style="background:var(--accent-light);border:1.5px solid var(--accent);border-radius:8px;padding:0.5rem 0.7rem;font-size:0.78rem;color:var(--ink);line-height:1.6">
+            <strong style="color:var(--accent)">💡 示例1：</strong>我想两个月学会 Python 数据分析<br>
+            <strong style="color:var(--accent)">💡 示例2：</strong>后天下午飞北京，航班 CA1234，14:00 起飞
+          </div>
+        </div>
       </div>
       <div class="upload-area" onclick="document.getElementById('fileInput').click()">
         <span class="upload-text">📷 上传图片</span>

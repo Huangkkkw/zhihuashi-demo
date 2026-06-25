@@ -109,6 +109,7 @@
 
   function classifyDemand(text) {
     var t = text.toLowerCase();
+    if (/飞机|航班|机票|机场|飞行|出差.*飞|去.*飞/.test(t)) return 'flight';
     if (/学会|学习|掌握|目标|计划|备考|考试|考证/.test(t)) return 'goal';
     if (/调整|修改|移到|改到|提前|延后|取消/.test(t)) return 'modify';
     if (/会议|课|活动|聚餐|约会|面试|比赛/.test(t)) return 'event';
@@ -190,6 +191,48 @@
     return resources;
   }
 
+  /* ====== 提取航班信息 ====== */
+  function extractFlightInfo(text) {
+    var info = { airline: '', flightNo: '', airport: '', time: '', date: '' };
+    // 提取航班号
+    var flightMatch = text.match(/([A-Z]{2}\d{3,4})/);
+    if (flightMatch) info.flightNo = flightMatch[1];
+    // 提取时间
+    var timeMatch = text.match(/(\d{1,2})[点时:：](\d{0,2})/);
+    if (timeMatch) info.time = timeMatch[1] + ':' + (timeMatch[2] || '00');
+    // 提取机场/目的地
+    var airportKeywords = ['首都机场', '大兴机场', '浦东机场', '虹桥机场', '白云机场', '宝安机场', '天府机场', '双流机场', '萧山机场', '长乐机场'];
+    for (var i = 0; i < airportKeywords.length; i++) {
+      if (text.includes(airportKeywords[i])) {
+        info.airport = airportKeywords[i];
+        break;
+      }
+    }
+    // 提取日期关键词
+    if (/明天/.test(text)) info.date = '明天';
+    else if (/后天/.test(text)) info.date = '后天';
+    else if (/大后天/.test(text)) info.date = '大后天';
+    else if (/下周/.test(text)) info.date = '下周';
+    else info.date = '今天';
+    return info;
+  }
+
+  /* ====== 搜索航班/出行资源 ====== */
+  function searchFlightResources(demand) {
+    var info = extractFlightInfo(demand.text);
+    var resources = [];
+    var airport = info.airport || '目标机场';
+    var city = airport.replace('机场', '');
+    resources.push({ title: '高德地图：当前位置 → ' + airport + ' 路线', source: 'amap.com', type: '导航' });
+    resources.push({ title: airport + ' 航站楼/登机口分布图', source: airport + '官网', type: '信息' });
+    resources.push({ title: airport + ' 值机/安检/登机全流程指南', source: '航旅纵横', type: '攻略' });
+    if (info.flightNo) {
+      resources.push({ title: info.flightNo + ' 航班实时动态查询', source: '飞常准', type: '动态' });
+    }
+    resources.push({ title: city + ' 机场大巴/地铁/出租车乘车指南', source: '高德地图', type: '交通' });
+    return resources;
+  }
+
   function generateQuestionsForDemand(demand) {
     var questions = [];
     var type = demand.type;
@@ -202,6 +245,24 @@
       if (/项目|作品|简历/.test(text)) {
         questions.push({ ai: '希望最终产出什么？', key: 'outcome' });
       }
+    } else if (type === 'flight') {
+      var info = extractFlightInfo(text);
+      var hasTime = info.time;
+      var hasAirport = info.airport;
+      var hasFlightNo = info.flightNo;
+
+      questions.push({ ai: '你当前所在的位置是哪里？（如：XX区XX路）', key: 'departLocation' });
+      if (!hasAirport) {
+        questions.push({ ai: '目的地是哪个机场？', key: 'airport' });
+      }
+      if (!hasFlightNo) {
+        questions.push({ ai: '航班号是多少？', key: 'flightNo' });
+      }
+      if (!hasTime) {
+        questions.push({ ai: '航班大概几点起飞？', key: 'flightTime' });
+      }
+      questions.push({ ai: '你打算怎么去机场？（地铁/打车/自驾/机场大巴）', key: 'transport' });
+      questions.push({ ai: '需要提前多久到机场办理手续？', key: 'arriveEarly' });
     } else if (type === 'event') {
       var hasTime = /\d{1,2}[点时:：]/.test(text);
       var hasDuration = /小时|分钟|半小时/.test(text);
@@ -319,8 +380,9 @@
 
     addUserMessage(text);
     setTimeout(function () {
-      var typeNames = { goal: '学习目标', event: '日程事件', modify: '调整需求' };
-      addSystemMessage('收到' + typeNames[type] + '「' + text.substring(0, 20) + (text.length > 20 ? '...' : '') + '」，约 <strong>' + demand.days + ' 天</strong>。');
+      var typeNames = { goal: '学习目标', event: '日程事件', modify: '调整需求', flight: '航班出行' };
+      var daysText = type === 'flight' ? '当日' : demand.days + ' 天';
+      addSystemMessage('收到' + typeNames[type] + '「' + text.substring(0, 20) + (text.length > 20 ? '...' : '') + '」，约 <strong>' + daysText + '</strong>。');
 
       // 如果当前没有正在进行的对话，自动开始收集信息
       if (state.phase === 'idle') {
@@ -331,6 +393,121 @@
     }, 200);
   };
 
+  /* ====== 计算航班出发时间 ====== */
+  function calcFlightSchedule(demand, dayIndex) {
+    var answers = demand.answers || {};
+    var info = extractFlightInfo(demand.text);
+    var flightTime = info.time || answers.flightTime || '14:00';
+    var transport = answers.transport || '地铁';
+    var arriveEarly = answers.arriveEarly || '2小时';
+    var airport = answers.airport || info.airport || '机场';
+    var flightNo = answers.flightNo || info.flightNo || '';
+
+    // 解析起飞时间
+    var ftParts = flightTime.split(':');
+    var ftHour = parseInt(ftParts[0]);
+    var ftMin = parseInt(ftParts[1] || 0);
+
+    // 根据交通方式估算路上时间
+    var travelMinutes = 60; // 默认1小时
+    if (/地铁/.test(transport)) travelMinutes = 50;
+    else if (/打车|出租车|滴滴/.test(transport)) travelMinutes = 40;
+    else if (/自驾/.test(transport)) travelMinutes = 45;
+    else if (/大巴|机场大巴/.test(transport)) travelMinutes = 70;
+
+    // 解析提前到达时间
+    var earlyMatch = arriveEarly.match(/(\d+)/);
+    var earlyMinutes = earlyMatch ? parseInt(earlyMatch[1]) * 60 : 120;
+
+    // 计算各节点时间
+    var arriveAirportHour = ftHour;
+    var arriveAirportMin = ftMin - earlyMinutes;
+    while (arriveAirportMin < 0) {
+      arriveAirportMin += 60;
+      arriveAirportHour -= 1;
+    }
+
+    var departHomeMin = arriveAirportMin - travelMinutes;
+    var departHomeHour = arriveAirportHour;
+    while (departHomeMin < 0) {
+      departHomeMin += 60;
+      departHomeHour -= 1;
+    }
+
+    // 格式化时间
+    function fmt(h, m) {
+      return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
+    }
+
+    var blocks = [];
+
+    // 1. 从家出发
+    var departHomeTime = fmt(departHomeHour, departHomeMin);
+    var arriveAirportTime = fmt(arriveAirportHour, arriveAirportMin);
+    blocks.push({
+      start: departHomeTime,
+      end: arriveAirportTime,
+      title: '🚗 从家出发前往' + airport,
+      detail: '乘坐' + transport + '，预计' + travelMinutes + '分钟到达' + airport,
+      type: 'event',
+      source: '高德地图 · ' + transport + '路线'
+    });
+
+    // 2. 到达机场，办理值机
+    var checkinEndHour = arriveAirportHour;
+    var checkinEndMin = arriveAirportMin + 40;
+    while (checkinEndMin >= 60) {
+      checkinEndMin -= 60;
+      checkinEndHour += 1;
+    }
+    blocks.push({
+      start: arriveAirportTime,
+      end: fmt(checkinEndHour, checkinEndMin),
+      title: '🛫 到达' + airport + '，办理值机/托运/安检',
+      detail: '提前' + (earlyMinutes / 60) + '小时到达，办理登机手续',
+      type: 'event',
+      source: airport + '官网 · 值机指南'
+    });
+
+    // 3. 候机
+    var boardHour = checkinEndHour;
+    var boardMin = checkinEndMin;
+    var boardEndHour = ftHour;
+    var boardEndMin = ftMin - 15;
+    while (boardEndMin < 0) {
+      boardEndMin += 60;
+      boardEndHour -= 1;
+    }
+    if (boardEndHour > boardHour || (boardEndHour === boardHour && boardEndMin > boardMin)) {
+      blocks.push({
+        start: fmt(boardHour, boardMin),
+        end: fmt(boardEndHour, boardEndMin),
+        title: '☕ 候机休息',
+        detail: '前往登机口等候，可处理邮件或休息',
+        type: 'event',
+        source: airport + ' · 登机口信息'
+      });
+    }
+
+    // 4. 登机起飞
+    var gateCloseMin = ftMin + 15;
+    var gateCloseHour = ftHour;
+    while (gateCloseMin >= 60) {
+      gateCloseMin -= 60;
+      gateCloseHour += 1;
+    }
+    blocks.push({
+      start: flightTime,
+      end: fmt(gateCloseHour, gateCloseMin),
+      title: '✈️ ' + (flightNo ? flightNo + ' ' : '') + '航班起飞',
+      detail: '目的地：' + airport + '，请留意登机广播',
+      type: 'event',
+      source: flightNo ? '飞常准 · ' + flightNo + '动态' : '航旅纵横'
+    });
+
+    return blocks;
+  }
+
   function renderDemandList() {
     var list = document.getElementById('demandList');
     if (state.demands.length === 0) {
@@ -339,12 +516,12 @@
     }
     var html = '';
     state.demands.forEach(function (d) {
-      var typeNames = { goal: '目标', event: '事件', modify: '调整' };
-      var typeColors = { goal: 'goal', event: 'event', modify: 'modify' };
+      var typeNames = { goal: '目标', event: '事件', modify: '调整', flight: '航班' };
+      var typeColors = { goal: 'goal', event: 'event', modify: 'modify', flight: 'goal' };
       html += '<div class="demand-tag">';
       html += '<span class="type ' + typeColors[d.type] + '">' + typeNames[d.type] + '</span>';
       html += '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + d.text + '</span>';
-      html += '<span style="font-size:0.65rem;color:var(--muted)">' + d.days + '天</span>';
+      html += '<span style="font-size:0.65rem;color:var(--muted)">' + (d.type === 'flight' ? '当日' : d.days + '天') + '</span>';
       html += '<span class="del" onclick="ZHS.removeDemand(' + d.id + ')">✕</span>';
       html += '</div>';
     });
@@ -374,6 +551,9 @@
       if (demand.type === 'goal') {
         var resources = searchResourcesForDemand(demand);
         demand.resources = resources;
+      } else if (demand.type === 'flight') {
+        var resources = searchFlightResources(demand);
+        demand.resources = resources;
       }
     });
 
@@ -385,6 +565,21 @@
         state.dialogQueue.push({ ai: searchMsg, delay: 400, isSystem: true });
 
         var foundMsg = '找到 <strong>' + demand.resources.length + ' 个</strong>推荐资源：';
+        state.dialogQueue.push({ ai: foundMsg, delay: 600, isSystem: true });
+
+        demand.resources.forEach(function (res, idx) {
+          var resMsg = (idx + 1) + '. <strong>' + res.title + '</strong> <span style="color:var(--muted);font-size:0.78rem">[' + res.type + ' · ' + res.source + ']</span>';
+          state.dialogQueue.push({ ai: resMsg, delay: 150, isSystem: true });
+        });
+      }
+
+      // 航班出行资源搜索展示
+      if (demand.type === 'flight' && demand.resources && demand.resources.length > 0) {
+        var flightInfo = extractFlightInfo(demand.text);
+        var searchMsg = '🔍 正在搜索「' + (flightInfo.airport || '目标机场') + '」出行信息...';
+        state.dialogQueue.push({ ai: searchMsg, delay: 400, isSystem: true });
+
+        var foundMsg = '找到 <strong>' + demand.resources.length + ' 个</strong>出行参考：';
         state.dialogQueue.push({ ai: foundMsg, delay: 600, isSystem: true });
 
         demand.resources.forEach(function (res, idx) {
@@ -455,6 +650,7 @@
 
     var goals = state.demands.filter(function (d) { return d.type === 'goal'; });
     var events = state.demands.filter(function (d) { return d.type === 'event'; });
+    var flights = state.demands.filter(function (d) { return d.type === 'flight'; });
 
     var maxDays = 21;
     state.demands.forEach(function (d) {
@@ -466,6 +662,18 @@
     var schedule = [];
     var startDate = new Date(2026, 5, 22); // 2026-06-22
 
+    // 计算航班目标日期索引
+    var flightDayMap = {};
+    flights.forEach(function (f) {
+      var info = extractFlightInfo(f.text);
+      var dayOffset = 0;
+      if (info.date === '明天') dayOffset = 1;
+      else if (info.date === '后天') dayOffset = 2;
+      else if (info.date === '大后天') dayOffset = 3;
+      else if (info.date === '下周') dayOffset = 7;
+      flightDayMap[f.id] = dayOffset;
+    });
+
     for (var i = 0; i < maxDays; i++) {
       var weekday = weekDays[i % 7];
       var weekNum = Math.floor(i / 7) + 1;
@@ -473,6 +681,14 @@
 
       var fixed = baseEvents[weekday] || [];
       fixed.forEach(function (e) { blocks.push(Object.assign({}, e)); });
+
+      // 如果今天有航班事件，插入航班日程块（优先于学习任务）
+      flights.forEach(function (f) {
+        if (flightDayMap[f.id] === i) {
+          var flightBlocks = calcFlightSchedule(f, i);
+          flightBlocks.forEach(function (fb) { blocks.push(fb); });
+        }
+      });
 
       var learnStart = 19;
       goals.forEach(function (goal, gi) {
