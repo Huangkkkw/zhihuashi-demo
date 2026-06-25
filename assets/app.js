@@ -21,6 +21,7 @@
   var ZHS = {};
   var chatArea = document.getElementById('chatArea');
   var demandIdCounter = 0;
+  var pendingQueue = []; // 收集过程中提交的需求，等待排队处理
 
   /* ====== 登录/注册 ====== */
   // 默认用户名为"智划师"，不强制登录
@@ -116,7 +117,8 @@
     return 'goal';
   }
 
-  function extractDaysFromDemand(text) {
+  function extractDaysFromDemand(text, type) {
+    if (type === 'flight') return 0;
     var match = text.match(/(\d+)\s*天/);
     if (match) return parseInt(match[1]);
     match = text.match(/(\d+)\s*周/);
@@ -208,6 +210,22 @@
         break;
       }
     }
+    // 如果没提取到具体机场，尝试从"飞XX"提取目的地城市
+    if (!info.airport) {
+      var destMatch = text.match(/飞(\S{2,4})/);
+      if (destMatch) {
+        var cityAirports = {
+          '北京': '首都机场', '上海': '浦东机场', '广州': '白云机场',
+          '深圳': '宝安机场', '成都': '天府机场', '重庆': '江北机场',
+          '杭州': '萧山机场', '西安': '咸阳机场', '昆明': '长水机场',
+          '南京': '禄口机场', '武汉': '天河机场', '长沙': '黄花机场',
+          '厦门': '高崎机场', '青岛': '胶东机场', '大连': '周水子机场',
+          '三亚': '凤凰机场', '海口': '美兰机场'
+        };
+        info.airport = cityAirports[destMatch[1]] || '';
+        if (info.airport) info.destCity = destMatch[1];
+      }
+    }
     // 提取日期关键词
     if (/明天/.test(text)) info.date = '明天';
     else if (/后天/.test(text)) info.date = '后天';
@@ -221,8 +239,8 @@
   function searchFlightResources(demand) {
     var info = extractFlightInfo(demand.text);
     var resources = [];
-    var airport = info.airport || '目标机场';
-    var city = airport.replace('机场', '');
+    var airport = info.airport || (info.destCity ? info.destCity + '机场' : '目标机场');
+    var city = info.destCity || airport.replace('机场', '').replace(/国际$/, '');
     resources.push({ title: '高德地图：当前位置 → ' + airport + ' 路线', source: 'amap.com', type: '导航' });
     resources.push({ title: airport + ' 航站楼/登机口分布图', source: airport + '官网', type: '信息' });
     resources.push({ title: airport + ' 值机/安检/登机全流程指南', source: '航旅纵横', type: '攻略' });
@@ -364,18 +382,34 @@
     var text = input.value.trim();
     if (!text) return;
 
-    // 如果当前正在收集信息，提示用户先完成对话
+    var type = classifyDemand(text);
+
+    // 如果当前正在收集信息，排队等待处理
     if (state.phase !== 'idle') {
-      addSystemMessage('⏳ 当前正在收集信息中，请先回答完当前问题，再提交新需求。');
+      var pendingDemand = {
+        id: ++demandIdCounter,
+        type: type,
+        text: text,
+        days: extractDaysFromDemand(text, type),
+        answers: {},
+        questions: [],
+        pending: true
+      };
+      state.demands.push(pendingDemand);
+      pendingQueue.push(pendingDemand);
+      renderDemandList();
+      input.value = '';
+      addUserMessage(text);
+      var typeNames = { goal: '学习目标', event: '日程事件', modify: '调整需求', flight: '航班出行' };
+      addSystemMessage('📋 已记录' + typeNames[type] + '，将在当前信息收集完成后自动处理。');
       return;
     }
 
-    var type = classifyDemand(text);
     var demand = {
       id: ++demandIdCounter,
       type: type,
       text: text,
-      days: extractDaysFromDemand(text),
+      days: extractDaysFromDemand(text, type),
       answers: {},
       questions: []
     };
@@ -406,7 +440,7 @@
     var flightTime = info.time || answers.flightTime || '14:00';
     var transport = answers.transport || '地铁';
     var arriveEarly = answers.arriveEarly || '2小时';
-    var airport = answers.airport || info.airport || '机场';
+    var airport = answers.airport || info.airport || (info.destCity ? info.destCity + '机场' : '机场');
     var flightNo = answers.flightNo || info.flightNo || '';
 
     // 解析起飞时间
@@ -600,7 +634,8 @@
 
         if (demand.type === 'flight' && demand.resources && demand.resources.length > 0) {
           var flightInfo = extractFlightInfo(demand.text);
-          var searchMsg = '🔍 正在搜索「' + (flightInfo.airport || '目标机场') + '」出行信息...';
+          var airportName = flightInfo.airport || (flightInfo.destCity ? flightInfo.destCity + '机场' : '目标机场');
+          var searchMsg = '🔍 正在搜索「' + airportName + '」出行信息...';
           state.dialogQueue.push({ ai: searchMsg, delay: 400, isSystem: true });
           var foundMsg = '找到 <strong>' + demand.resources.length + ' 个</strong>出行参考：';
           state.dialogQueue.push({ ai: foundMsg, delay: 600, isSystem: true });
@@ -613,7 +648,8 @@
         var questions = generateQuestionsForDemand(demand);
         demand.questions = questions;
         if (questions.length > 0) {
-          state.dialogQueue.push({ ai: '--- 新需求 #' + demand.id + '：' + demand.text.substring(0, 12) + '...---', delay: 300 });
+          var headerDays = demand.type === 'flight' ? '当日' : demand.days + '天';
+          state.dialogQueue.push({ ai: '--- 新需求 #' + demand.id + '：' + demand.text.substring(0, 12) + '...（' + headerDays + '）---', delay: 300 });
           questions.forEach(function (q) {
             state.dialogQueue.push(Object.assign({}, q, { demandId: demand.id }));
           });
@@ -661,7 +697,8 @@
       // 航班出行资源搜索展示
       if (demand.type === 'flight' && demand.resources && demand.resources.length > 0) {
         var flightInfo = extractFlightInfo(demand.text);
-        var searchMsg = '🔍 正在搜索「' + (flightInfo.airport || '目标机场') + '」出行信息...';
+        var airportName = flightInfo.airport || (flightInfo.destCity ? flightInfo.destCity + '机场' : '目标机场');
+        var searchMsg = '🔍 正在搜索「' + airportName + '」出行信息...';
         state.dialogQueue.push({ ai: searchMsg, delay: 400, isSystem: true });
 
         var foundMsg = '找到 <strong>' + demand.resources.length + ' 个</strong>出行参考：';
@@ -677,7 +714,8 @@
       var questions = generateQuestionsForDemand(demand);
       demand.questions = questions;
       if (questions.length > 0) {
-        state.dialogQueue.push({ ai: '--- 需求 #' + demand.id + '：' + demand.text.substring(0, 12) + '...（' + demand.days + '天）---', delay: 300 });
+        var headerDays = demand.type === 'flight' ? '当日' : demand.days + '天';
+        state.dialogQueue.push({ ai: '--- 需求 #' + demand.id + '：' + demand.text.substring(0, 12) + '...（' + headerDays + '）---', delay: 300 });
         questions.forEach(function (q) {
           state.dialogQueue.push(Object.assign({}, q, { demandId: demand.id }));
         });
@@ -720,6 +758,21 @@
     }, 1500);
 
     state.phase = 'idle';
+
+    // 自动处理排队中的需求
+    if (pendingQueue.length > 0) {
+      var queued = pendingQueue.slice();
+      pendingQueue = [];
+      setTimeout(function () {
+        var count = queued.length;
+        addSystemMessage('📋 开始自动处理 ' + count + ' 个排队中的需求...');
+        setTimeout(function () {
+          // 清除这些需求的 pending 标记
+          queued.forEach(function (qd) { delete qd.pending; });
+          ZHS.generateSchedule();
+        }, 500);
+      }, 1200);
+    }
   }
 
   /* ====== 构建整合后的总行程（只包含目标任务和事件） ====== */
@@ -752,7 +805,7 @@
 
     var weekDays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
     var schedule = [];
-    var startDate = new Date(2026, 5, 22); // 2026-06-22
+    var startDate = new Date(2026, 5, 23); // 2026-06-23，基准日期
 
     // 计算航班目标日期索引
     var flightDayMap = {};
