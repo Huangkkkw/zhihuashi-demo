@@ -235,20 +235,66 @@
     return info;
   }
 
-  /* ====== 搜索航班/出行资源 ====== */
-  function searchFlightResources(demand) {
+  /* ====== 搜索航班静态资源（不依赖用户回答） ====== */
+  function searchFlightStaticResources(demand) {
     var info = extractFlightInfo(demand.text);
     var resources = [];
     var airport = info.airport || (info.destCity ? info.destCity + '机场' : '目标机场');
-    var city = info.destCity || airport.replace('机场', '').replace(/国际$/, '');
-    resources.push({ title: '高德地图：当前位置 → ' + airport + ' 路线', source: 'amap.com', type: '导航' });
     resources.push({ title: airport + ' 航站楼/登机口分布图', source: airport + '官网', type: '信息' });
     resources.push({ title: airport + ' 值机/安检/登机全流程指南', source: '航旅纵横', type: '攻略' });
     if (info.flightNo) {
       resources.push({ title: info.flightNo + ' 航班实时动态查询', source: '飞常准', type: '动态' });
     }
-    resources.push({ title: city + ' 机场大巴/地铁/出租车乘车指南', source: '高德地图', type: '交通' });
     return resources;
+  }
+
+  /* ====== 搜索航班路线资源（依赖用户回答后调用） ====== */
+  function searchFlightRouteResources(demand) {
+    var answers = demand.answers || {};
+    var info = extractFlightInfo(demand.text);
+    var resources = [];
+    var airport = answers.airport || info.airport || (info.destCity ? info.destCity + '机场' : '机场');
+    var transport = answers.transport || '';
+    var location = answers.departLocation || '';
+
+    if (location && transport) {
+      resources.push({ title: '高德地图：' + location + ' → ' + airport + ' · ' + transport + '路线', source: 'amap.com', type: '导航' });
+    } else if (location) {
+      resources.push({ title: '高德地图：' + location + ' → ' + airport + ' 路线', source: 'amap.com', type: '导航' });
+    }
+    if (transport) {
+      resources.push({ title: airport + ' · ' + transport + '乘车指南', source: '高德地图', type: '交通' });
+    }
+    return resources;
+  }
+
+  /* ====== 展示智能推荐路线结果 ====== */
+  function showRouteRecommendations(demand) {
+    var answers = demand.answers || {};
+    var info = extractFlightInfo(demand.text);
+    var airport = answers.airport || info.airport || (info.destCity ? info.destCity + '机场' : '机场');
+    var location = answers.departLocation || '';
+
+    var msg = '为你找到以下路线方案：<br>';
+    var recs = [
+      { mode: '打车', time: '约40分钟', cost: '¥80-120', best: true },
+      { mode: '地铁', time: '约50分钟', cost: '¥8-12', best: false },
+      { mode: '机场大巴', time: '约70分钟', cost: '¥25', best: false }
+    ];
+    recs.forEach(function (r, i) {
+      var badge = r.best ? ' <span style="color:var(--accent);font-weight:600">[推荐]</span>' : '';
+      msg += (i + 1) + '. <strong>' + r.mode + '</strong>：' + r.time + '，' + r.cost + badge + '<br>';
+    });
+    msg += '<br>推荐方案：<strong>打车</strong>，用时最短。';
+    addSystemMessage(msg);
+  }
+
+  function unskipStep(key, demandId) {
+    state.dialogQueue.forEach(function (step) {
+      if (step.key === key && step.demandId === demandId) {
+        step.skip = false;
+      }
+    });
   }
 
   function generateQuestionsForDemand(demand) {
@@ -279,7 +325,11 @@
       if (!hasTime) {
         questions.push({ ai: '航班大概几点起飞？', key: 'flightTime' });
       }
-      questions.push({ ai: '你打算怎么去机场？（地铁/打车/自驾/机场大巴）', key: 'transport' });
+      // 路线规划方式选择
+      questions.push({ ai: '你希望我怎么帮你规划路线？回复数字选择：<br>1. 智能推荐 - 我帮你搜索最快路线<br>2. 自主选择 - 你告诉我怎么过去', key: 'routeMode' });
+      // 条件问题：根据 routeMode 回答动态显示
+      questions.push({ ai: '你打算怎么去机场？（地铁/打车/自驾/机场大巴）', key: 'transport', skip: true });
+      questions.push({ ai: '是否接受推荐方案（打车）？回复「是」接受，或回复具体交通方式（地铁/打车/自驾/机场大巴）', key: 'acceptRoute', skip: true });
       questions.push({ ai: '需要提前多久到机场办理手续？', key: 'arriveEarly' });
     } else if (type === 'event') {
       var hasTime = /\d{1,2}[点时:：]/.test(text);
@@ -330,6 +380,11 @@
 
   /* ====== 运行对话队列 ====== */
   function runDialogQueue() {
+    // 跳过标记为 skip 的条件问题
+    while (state.dialogIndex < state.dialogQueue.length && state.dialogQueue[state.dialogIndex].skip) {
+      state.dialogIndex++;
+    }
+
     if (state.dialogIndex >= state.dialogQueue.length) {
       finishCollecting();
       return;
@@ -373,6 +428,61 @@
     }
 
     addUserMessage(text);
+
+    // 航班路线模式处理：根据用户选择展示不同后续
+    if (currentStep && currentStep.key === 'routeMode' && currentStep.demandId) {
+      var demand = state.demands.find(function (d) { return d.id === currentStep.demandId; });
+      if (demand) {
+        if (/1|推荐|智能/.test(text)) {
+          // 智能推荐模式
+          var info = extractFlightInfo(demand.text);
+          var airport = demand.answers.airport || info.airport || (info.destCity ? info.destCity + '机场' : '机场');
+          var location = demand.answers.departLocation || '';
+          if (location) {
+            addSystemMessage('🔍 正在搜索从「' + location + '」到「' + airport + '」的最快路线...');
+          } else {
+            addSystemMessage('🔍 正在搜索到「' + airport + '」的最快路线...');
+          }
+          setTimeout(function () {
+            showRouteRecommendations(demand);
+            demand.answers.transport = '打车'; // 默认推荐
+            unskipStep('acceptRoute', demand.id);
+            runDialogQueue();
+          }, 800);
+          return;
+        } else {
+          // 自主选择模式
+          addSystemMessage('好的，请自主选择交通方式。');
+          unskipStep('transport', demand.id);
+          setTimeout(runDialogQueue, 300);
+          return;
+        }
+      }
+    }
+
+    // 接受推荐处理：用户可能接受或选择其他交通方式
+    if (currentStep && currentStep.key === 'acceptRoute' && currentStep.demandId) {
+      var demand = state.demands.find(function (d) { return d.id === currentStep.demandId; });
+      if (demand) {
+        if (/是|同意|接受|好|可以/.test(text)) {
+          // 接受推荐，transport 已设为"打车"
+          addSystemMessage('✅ 已选择推荐方案：打车。');
+        } else if (/地铁/.test(text)) {
+          demand.answers.transport = '地铁';
+          addSystemMessage('✅ 已切换为地铁方案。');
+        } else if (/打车|滴滴|出租/.test(text)) {
+          demand.answers.transport = '打车';
+          addSystemMessage('✅ 已切换为打车方案。');
+        } else if (/自驾/.test(text)) {
+          demand.answers.transport = '自驾';
+          addSystemMessage('✅ 已切换为自驾方案。');
+        } else if (/大巴/.test(text)) {
+          demand.answers.transport = '机场大巴';
+          addSystemMessage('✅ 已切换为机场大巴方案。');
+        }
+      }
+    }
+
     setTimeout(runDialogQueue, 300);
   };
 
@@ -614,7 +724,7 @@
           var resources = searchResourcesForDemand(demand);
           demand.resources = resources;
         } else if (demand.type === 'flight') {
-          var resources = searchFlightResources(demand);
+          var resources = searchFlightStaticResources(demand);
           demand.resources = resources;
         }
       });
@@ -635,9 +745,9 @@
         if (demand.type === 'flight' && demand.resources && demand.resources.length > 0) {
           var flightInfo = extractFlightInfo(demand.text);
           var airportName = flightInfo.airport || (flightInfo.destCity ? flightInfo.destCity + '机场' : '目标机场');
-          var searchMsg = '🔍 正在搜索「' + airportName + '」出行信息...';
+          var searchMsg = '🔍 正在搜索「' + airportName + '」机场服务信息...';
           state.dialogQueue.push({ ai: searchMsg, delay: 400, isSystem: true });
-          var foundMsg = '找到 <strong>' + demand.resources.length + ' 个</strong>出行参考：';
+          var foundMsg = '找到 <strong>' + demand.resources.length + ' 个</strong>参考信息：';
           state.dialogQueue.push({ ai: foundMsg, delay: 600, isSystem: true });
           demand.resources.forEach(function (res, idx) {
             var resMsg = (idx + 1) + '. <strong>' + res.title + '</strong> <span style="color:var(--muted);font-size:0.78rem">[' + res.type + ' · ' + res.source + ']</span>';
@@ -673,7 +783,7 @@
         var resources = searchResourcesForDemand(demand);
         demand.resources = resources;
       } else if (demand.type === 'flight') {
-        var resources = searchFlightResources(demand);
+        var resources = searchFlightStaticResources(demand);
         demand.resources = resources;
       }
     });
@@ -694,14 +804,14 @@
         });
       }
 
-      // 航班出行资源搜索展示
+      // 航班静态信息搜索展示（不依赖用户回答）
       if (demand.type === 'flight' && demand.resources && demand.resources.length > 0) {
         var flightInfo = extractFlightInfo(demand.text);
         var airportName = flightInfo.airport || (flightInfo.destCity ? flightInfo.destCity + '机场' : '目标机场');
-        var searchMsg = '🔍 正在搜索「' + airportName + '」出行信息...';
+        var searchMsg = '🔍 正在搜索「' + airportName + '」机场服务信息...';
         state.dialogQueue.push({ ai: searchMsg, delay: 400, isSystem: true });
 
-        var foundMsg = '找到 <strong>' + demand.resources.length + ' 个</strong>出行参考：';
+        var foundMsg = '找到 <strong>' + demand.resources.length + ' 个</strong>参考信息：';
         state.dialogQueue.push({ ai: foundMsg, delay: 600, isSystem: true });
 
         demand.resources.forEach(function (res, idx) {
