@@ -27,6 +27,26 @@
   // 默认用户名为"智划师"，不强制登录
   state.currentUser = '智划师';
 
+  ZHS.switchTab = function (tab) {
+    var tabChat = document.getElementById('tabChat');
+    var tabGoals = document.getElementById('tabGoals');
+    var panelChat = document.getElementById('panelChat');
+    var panelGoals = document.getElementById('panelGoals');
+    if (!tabChat || !tabGoals || !panelChat || !panelGoals) return;
+
+    if (tab === 'chat') {
+      tabChat.classList.add('active');
+      tabGoals.classList.remove('active');
+      panelChat.classList.add('active');
+      panelGoals.classList.remove('active');
+    } else {
+      tabGoals.classList.add('active');
+      tabChat.classList.remove('active');
+      panelGoals.classList.add('active');
+      panelChat.classList.remove('active');
+    }
+  };
+
   ZHS.showAuth = function () {
     document.getElementById('authOverlay').style.display = 'flex';
     document.getElementById('authUsername').focus();
@@ -867,7 +887,7 @@
     }
 
     setTimeout(function () {
-      addSystemMessage('可继续提交新需求，AI 会更新总行程。');
+      addSystemMessage('可继续提交新需求，AI 会更新总行程。<br><span style="color:var(--muted);font-size:0.78rem">💡 试试：后天下午飞北京，航班 CA1234，14:00 起飞</span>');
     }, 600);
 
     setTimeout(function () {
