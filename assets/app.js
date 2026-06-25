@@ -364,6 +364,12 @@
     var text = input.value.trim();
     if (!text) return;
 
+    // 如果当前正在收集信息，提示用户先完成对话
+    if (state.phase !== 'idle') {
+      addSystemMessage('⏳ 当前正在收集信息中，请先回答完当前问题，再提交新需求。');
+      return;
+    }
+
     var type = classifyDemand(text);
     var demand = {
       id: ++demandIdCounter,
@@ -541,6 +547,85 @@
     if (state.demands.length === 0) return;
     if (state.phase !== 'idle') return;
 
+    // 如果已有行程，只收集新需求的信息，然后更新
+    if (state.schedule) {
+      var newDemands = state.demands.filter(function (d) {
+        return !d.questions || d.questions.length === 0;
+      });
+
+      if (newDemands.length === 0) {
+        // 没有新需求需要收集，直接重新生成
+        state.phase = 'generating';
+        state.schedule = buildIntegratedSchedule();
+        state.currentDay = 0;
+        state.currentWeek = 0;
+        state.phase = 'ready';
+        renderSchedule();
+        addSystemMessage('🔄 总行程表已更新！整合 <strong>' + state.demands.length + ' 个需求</strong>。');
+        setTimeout(function () {
+          addSystemMessage('可继续提交新需求，AI 会更新总行程。');
+        }, 400);
+        state.phase = 'idle';
+        return;
+      }
+
+      // 有新需求，进入增量收集模式
+      state.phase = 'collecting';
+      state.dialogQueue = [];
+      state.dialogIndex = 0;
+
+      // 只为新需求搜索资源
+      newDemands.forEach(function (demand) {
+        if (demand.type === 'goal') {
+          var resources = searchResourcesForDemand(demand);
+          demand.resources = resources;
+        } else if (demand.type === 'flight') {
+          var resources = searchFlightResources(demand);
+          demand.resources = resources;
+        }
+      });
+
+      // 构建只针对新需求的对话队列
+      newDemands.forEach(function (demand) {
+        if (demand.type === 'goal' && demand.resources && demand.resources.length > 0) {
+          var searchMsg = '🔍 正在搜索「' + demand.text.substring(0, 20) + '」相关学习资源...';
+          state.dialogQueue.push({ ai: searchMsg, delay: 400, isSystem: true });
+          var foundMsg = '找到 <strong>' + demand.resources.length + ' 个</strong>推荐资源：';
+          state.dialogQueue.push({ ai: foundMsg, delay: 600, isSystem: true });
+          demand.resources.forEach(function (res, idx) {
+            var resMsg = (idx + 1) + '. <strong>' + res.title + '</strong> <span style="color:var(--muted);font-size:0.78rem">[' + res.type + ' · ' + res.source + ']</span>';
+            state.dialogQueue.push({ ai: resMsg, delay: 150, isSystem: true });
+          });
+        }
+
+        if (demand.type === 'flight' && demand.resources && demand.resources.length > 0) {
+          var flightInfo = extractFlightInfo(demand.text);
+          var searchMsg = '🔍 正在搜索「' + (flightInfo.airport || '目标机场') + '」出行信息...';
+          state.dialogQueue.push({ ai: searchMsg, delay: 400, isSystem: true });
+          var foundMsg = '找到 <strong>' + demand.resources.length + ' 个</strong>出行参考：';
+          state.dialogQueue.push({ ai: foundMsg, delay: 600, isSystem: true });
+          demand.resources.forEach(function (res, idx) {
+            var resMsg = (idx + 1) + '. <strong>' + res.title + '</strong> <span style="color:var(--muted);font-size:0.78rem">[' + res.type + ' · ' + res.source + ']</span>';
+            state.dialogQueue.push({ ai: resMsg, delay: 150, isSystem: true });
+          });
+        }
+
+        var questions = generateQuestionsForDemand(demand);
+        demand.questions = questions;
+        if (questions.length > 0) {
+          state.dialogQueue.push({ ai: '--- 新需求 #' + demand.id + '：' + demand.text.substring(0, 12) + '...---', delay: 300 });
+          questions.forEach(function (q) {
+            state.dialogQueue.push(Object.assign({}, q, { demandId: demand.id }));
+          });
+        }
+      });
+
+      state.dialogQueue.push({ ai: '信息收集完毕！正在更新总行程表...', delay: 800, isSystem: true });
+      addSystemMessage('检测到新需求，开始收集信息。');
+      setTimeout(runDialogQueue, 400);
+      return;
+    }
+
     state.phase = 'collecting';
     state.dialogQueue = [];
     state.dialogIndex = 0;
@@ -606,10 +691,13 @@
   };
 
   function finishCollecting() {
+    var isUpdate = !!state.schedule; // 是否增量更新
     state.phase = 'generating';
     state.schedule = buildIntegratedSchedule();
-    state.currentDay = 0;
-    state.currentWeek = 0;
+    if (!isUpdate) {
+      state.currentDay = 0;
+      state.currentWeek = 0;
+    }
     state.phase = 'ready';
 
     renderSchedule();
@@ -617,7 +705,11 @@
     document.getElementById('weekNav').style.display = 'flex';
 
     var total = calcTotalProgress();
-    addSystemMessage('✅ 总行程表已生成！整合 <strong>' + state.demands.length + ' 个需求</strong>，共 ' + state.schedule.length + ' 天，' + total.total + ' 个任务。');
+    if (isUpdate) {
+      addSystemMessage('🔄 总行程表已更新！整合 <strong>' + state.demands.length + ' 个需求</strong>，共 ' + state.schedule.length + ' 天，' + total.total + ' 个任务。');
+    } else {
+      addSystemMessage('✅ 总行程表已生成！整合 <strong>' + state.demands.length + ' 个需求</strong>，共 ' + state.schedule.length + ' 天，' + total.total + ' 个任务。');
+    }
 
     setTimeout(function () {
       addSystemMessage('可继续提交新需求，AI 会更新总行程。');
